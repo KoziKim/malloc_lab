@@ -81,7 +81,15 @@ team_t team = {
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp)-WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp)-GET_SIZE(((char *)(bp)-DSIZE)))
+
+#define PUT_NEXT_ADDRESS(bp, address) (*(unsigned int *)(bp) = (address)) /* 현재 블록 포인터에 NEXT 주소를 설정함 */
+#define PUT_PREV_ADDRESS(bp, address) (*(unsigned int *)((char *)bp + WSIZE) = (address))
+
+#define NEXT_FREE(bp) (*(unsigned int *)(bp))          /* 다음 프리 블록의 주소 */
+#define PREV_FREE(bp) (*(unsigned int *)(bp) + WSIZE)  /* 이전 프리 블록의 주소 */
+
 void*   heap_listp;
+unsigned int*   ROOT;
 
 /* 앞 뒤 검사해서 free인 것 합침 */
 /* 연결하기 전에 변수 3개 선언 */
@@ -92,39 +100,80 @@ static void *coalesce(void *bp)
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-    /* Case 1 이전 이후 둘 다 할당됐다면 */
+    /* Case 1 전 후 둘 다 할당됐다면 */
     if (prev_alloc && next_alloc)
     {
+        PUT_NEXT_ADDRESS(bp, ROOT); /* bp의 NEXT에 ROOT 주소 넣음*/
+        PUT_PREV_ADDRESS(ROOT, bp); /* ROOT의 PREV에 bp 주소 넣음 */
+        PUT_PREV_ADDRESS(bp, NULL); /* bp의 PREV에 NULL 넣음 */
+        ROOT = bp; /* ROOT를 bp 주소로 바꿔줌 */
         return bp;
     }
-    /* Case 2 이전꺼 할당됐고, 다음께 할당 안됐다면 */
-    /* 다음꺼랑 합침 */
-    /* 원래 사이즈 = 현재 블록 사이즈, + 다음 블록 사이즈 해서 합친 사이즈 */
-    /* 헤더랑 풋터에 사이즈랑 0 넣어서 할당 안됨을 표시함 */
+    /* Case 2 이전꺼 막힘, 다음께 free 블록 */
     /* 사이 값은 trash 값 되기 때문에 굳이 안건드림 */
     /* 헤더 먼저 바꿔야 size 만큼 이동돼서 성립 */
     else if (prev_alloc && !next_alloc)
     {
+        if (NEXT_BLKP(bp) == ROOT) {
+            PUT_NEXT_ADDRESS(bp, ROOT);
+            PUT_PREV_ADDRESS(bp, NULL);
+        }
+        else {
+            PUT_NEXT_ADDRESS(PREV_FREE(NEXT_BLKP(bp)), NEXT_FREE(NEXT_BLKP(bp))); /* NEXT_BLKP 기준 이전 free 블록의 NEXT 자리에 NEXT_BLKP의 NEXT free 블록 주소 넣음*/
+            PUT_PREV_ADDRESS(NEXT_FREE(NEXT_BLKP(bp)), PREV_FREE(NEXT_BLKP(bp))); /* NEXT_BLKP 기준 다음 free 블록의 PREV 자리에 NEXT_BLKP의 PREV free 블록 주소 넣음*/
+        }
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
+
+        PUT_NEXT_ADDRESS(bp, ROOT);
+        PUT_PREV_ADDRESS(ROOT, bp);
+        PUT_PREV_ADDRESS(bp, NULL);
+        ROOT = bp;
     }
-    /* Case 3 이전께 할당 안되고 다음께 할당됐다면 */
+    /* Case 3 앞이 free 블록 뒤는 할당 블록 */
     else if (!prev_alloc && next_alloc)
     {
+        if (PREV_BLKP(bp) == ROOT) {
+            PUT_NEXT_ADDRESS(PREV_BLKP(bp), ROOT);
+            PUT_PREV_ADDRESS(PREV_BLKP(bp), NULL);
+        }
+        else {
+            PUT_NEXT_ADDRESS(PREV_FREE(PREV_BLKP(bp)), NEXT_FREE(PREV_BLKP(bp))); /* PREV_BLKP 기준 이전 free 블록의 NEXT 자리에 PREV_BLKP의 NEXT free 블록 주소 넣음*/
+            PUT_PREV_ADDRESS(NEXT_FREE(PREV_BLKP(bp)), PREV_FREE(PREV_BLKP(bp))); /* PREV_BLKP 기준 다음 free 블록의 PREV 자리에 PREV_BLKP의 PREV free 블록 주소 넣음*/
+        }
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
+
+        PUT_NEXT_ADDRESS(PREV_BLKP(bp), ROOT);
+        PUT_PREV_ADDRESS(ROOT, PREV_BLKP(bp));
+        PUT_PREV_ADDRESS(bp, NULL);
+        ROOT = PREV_BLKP(bp);
     }
     /* Case 4 */
     else
     {
+        if ((PREV_BLKP(bp) == ROOT) || (NEXT_BLKP(bp) == ROOT)) {
+            PUT_NEXT_ADDRESS(PREV_BLKP(bp), ROOT);
+            PUT_PREV_ADDRESS(PREV_BLKP(bp), NULL);
+        }
+        else {
+            PUT_NEXT_ADDRESS(PREV_FREE(PREV_BLKP(bp)), NEXT_FREE(PREV_BLKP(bp)));
+            PUT_PREV_ADDRESS(NEXT_FREE(PREV_BLKP(bp)), PREV_FREE(PREV_BLKP(bp)));
+        }
+        PUT_NEXT_ADDRESS(PREV_FREE(NEXT_BLKP(bp)), NEXT_FREE(NEXT_BLKP(bp)));
+        PUT_PREV_ADDRESS(NEXT_FREE(NEXT_BLKP(bp)), PREV_FREE(NEXT_BLKP(bp)));
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
                 GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
+        
+        PUT_NEXT_ADDRESS(PREV_BLKP(bp), ROOT);
+        PUT_PREV_ADDRESS(ROOT, PREV_BLKP(bp));
+        PUT_PREV_ADDRESS(PREV_BLKP(bp), NULL);
+        ROOT = PREV_BLKP(bp);
     }
     return bp;
 }
@@ -160,6 +209,7 @@ int mm_init(void)
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
     heap_listp += (2 * WSIZE);                     /* 블록 포인터가 헤더 끝난 부분에서 시작 */
 
+    ROOT = mem_heap_lo();
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -170,12 +220,17 @@ static void *find_fit(size_t asize)
 {
     /* First-fit search */
     void *bp;
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    for (bp = NEXT_BLKP(bp); bp != mem_heap_lo(); bp = NEXT_BLKP(bp))
     {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
-        {
+        if (bp == NULL) {
+            printf("%u\n\n", bp);
+            return NULL; /* no fit */
+        }
+        if (GET_SIZE(HDRP(bp)) >= asize) {
+            printf("여러번? %u\n\n", bp);
             return bp;
         }
+        printf("무엇?");
     }
     return NULL; /* No fit */
 }
@@ -183,16 +238,35 @@ static void *find_fit(size_t asize)
 static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
-    if ((csize - asize) >= (2 * DSIZE))
+
+    if ((csize - asize) >= (2 * DSIZE)) /* 쪼개졌을 때 */
     {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
-        bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize - asize, 0));
-        PUT(FTRP(bp), PACK(csize - asize, 0));
+
+        PUT(HDRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
+        if (bp == ROOT) {
+            PUT_PREV_ADDRESS(NEXT_BLKP(bp), NULL);
+            PUT_NEXT_ADDRESS(NEXT_BLKP(bp), ROOT);
+            ROOT = NEXT_BLKP(bp);
+        }
+        else {
+            PUT_NEXT_ADDRESS(PREV_FREE(NEXT_BLKP(bp)), NEXT_FREE(NEXT_BLKP(bp))); /* NEXT_BLKP 기준으로 전 후 연결 */
+            PUT_PREV_ADDRESS(NEXT_FREE(NEXT_BLKP(bp)), PREV_FREE(NEXT_BLKP(bp)));
+        }
     }
-    else
+    else /* 쪼개지지 않았을 때 */
     {
+        if (bp == ROOT) {   /* 첫번째일 때 */
+            PUT_PREV_ADDRESS(NEXT_FREE(bp), NULL);
+            PUT_NEXT_ADDRESS(NEXT_FREE(bp), ROOT);
+            ROOT = NEXT_FREE(bp);
+        }
+        else {
+            PUT_NEXT_ADDRESS(PREV_FREE(bp), NEXT_FREE(bp));
+            PUT_PREV_ADDRESS(NEXT_FREE(bp), PREV_FREE(bp));
+        }
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
@@ -217,12 +291,20 @@ void *mm_malloc(size_t size)
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE); /* (DSIZE - 1)은 올림 위함. size + DSIZE가 헤더 풋터 포함한 진짜 필요한 사이즈. */
     /* Search the free list for a fit */
+    printf("왜 안돼?\n\n");
     if ((bp = find_fit(asize)) != NULL)
     {
+        // printf("%u\n\n", ROOT);
+        // printf("전%u\n\n", bp);
         place(bp, asize);
+        // printf("%d\n\n", cnt);
+        // cnt++;
+        // printf("error?\n\n");
+        // printf("place 후 %u\n\n", bp);
         return bp;
     }
     /* No fit found. Get more memory and place the block */
+    printf("extend\n\n");
     extendsize = MAX(asize, CHUNKSIZE);
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
@@ -251,10 +333,11 @@ void *mm_realloc(void *ptr, size_t size)
     void *newptr;
     size_t copySize;
 
+    printf("realloc\n\n");
     newptr = mm_malloc(size);
     if (newptr == NULL)
         return NULL;
-    copySize = GET_SIZE(HDRP(oldptr)) - 2*WSIZE - 1;
+    copySize = GET_SIZE(HDRP(oldptr)) - 2*WSIZE;
     if (size < copySize)
         copySize = size;
     memcpy(newptr, oldptr, copySize);
