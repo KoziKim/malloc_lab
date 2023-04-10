@@ -88,10 +88,23 @@ team_t team = {
 #define NEXT_FREE(bp) (*(unsigned int *)(bp))          /* 다음 프리 블록의 주소 */
 #define PREV_FREE(bp) (*(unsigned int *)(bp + WSIZE))  /* 이전 프리 블록의 주소 */
 
-void*   heap_listp;
-unsigned int*   ROOT;
-void    take_off_from_freelist(void *bp);
-void    insert_in_first_place(void *bp);
+#define NLISTS 16
+
+#define SIZE_CLASS_INDEX(size) ((size <= 32) ? 0 : (size <= 64) ? 1 : \
+                                (size <= 128) ? 2 : (size <= 256) ? 3 : \
+                                (size <= 512) ? 4 : (size <= 1024) ? 5 : \
+                                (size <= 2048) ? 6 : (size <= 4096) ? 7 : \
+                                (size <= 8192) ? 8 : (size <= 16384) ? 9 : \
+                                (size <= 32768) ? 10 : (size <= 65536) ? 11 : \
+                                (size <= 131072) ? 12 : (size <= 262144) ? 13 : \
+                                (size <= 524288) ? 14 : (size <= 1048576) ? 15 : NLISTS-1)
+
+void *heap_listp;
+void *seg_list[NLISTS];
+// unsigned int*   ROOT;
+
+void    remove_list(void *bp);
+void    insert_list(void *bp);
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
 static void *find_fit(size_t asize);
@@ -103,6 +116,11 @@ static void place(void *bp, size_t asize);
 /* 맨 앞 맨 뒤 블록 검사 안하려고, 예외처리 빼려고 프롤로그 헤더/풋터, 에필로그 헤더 넣는 거임.*/
 int mm_init(void)
 {
+    int i;
+    /* Initialize lists */
+    for (i = 0; i < NLISTS; i++) {
+        seg_list[i] = mem_heap_lo(); /* seg_list를 mem_heap_lo()로 초기화 */
+    }
     /* Create the initial empty heap */
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
@@ -112,7 +130,7 @@ int mm_init(void)
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
     heap_listp += (2 * WSIZE);                     /* 블록 포인터가 헤더 끝난 부분에서 시작 */
 
-    ROOT = mem_heap_lo();
+    // ROOT = mem_heap_lo();
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -123,10 +141,13 @@ int mm_init(void)
 /* 연결하기 전에 변수 3개 선언 */
 /* size는 현재 가리키고 있는 블록 사이즈 */
 /* 위 2개는 전 후 할당 됐는지 파악 */
-void    take_off_from_freelist(void *bp)
+void    remove_list(void *bp)
 {
-    if (bp == ROOT) {
-        ROOT = NEXT_FREE(bp);
+    size_t size = GET_SIZE(HDRP(bp));
+    int index = SIZE_CLASS_INDEX(size);
+    
+    if (bp == seg_list[index]) {
+        seg_list[index] = NEXT_FREE(bp);
     } 
     else {
         PUT_NEXT_ADDR(PREV_FREE(bp), NEXT_FREE(bp));
@@ -136,14 +157,16 @@ void    take_off_from_freelist(void *bp)
     }
 }
 
-void    insert_in_first_place(void *bp)
+void    insert_list(void *bp)
 {
-    PUT_NEXT_ADDR(bp, ROOT); /* bp의 NEXT에 ROOT 주소 넣음*/
-    if (ROOT != mem_heap_lo()) {
-        PUT_PREV_ADDR(ROOT, bp); /* ROOT의 PREV에 bp 주소 넣음 */
+    size_t size = GET_SIZE(HDRP(bp));
+    int index = SIZE_CLASS_INDEX(size);
+
+    PUT_NEXT_ADDR(bp, seg_list[index]);
+    if (seg_list[index] != mem_heap_lo()) {
+        PUT_PREV_ADDR(seg_list[index], bp);
     }
-    // PUT_PREV_ADDR(bp, NULL); /* bp의 PREV에 NULL 넣음 */
-    ROOT = bp; /* ROOT를 bp 주소로 바꿔줌 */
+    seg_list[index] = bp; 
 }
 
 static void *coalesce(void *bp)
@@ -161,7 +184,7 @@ static void *coalesce(void *bp)
     // printf("c2?\n\n");
     if (prev_alloc && next_alloc)
     {
-        insert_in_first_place(bp);
+        insert_list(bp);
         return bp;
     }
     /* Case 2 이전꺼 막힘, 다음께 free 블록 */
@@ -169,37 +192,33 @@ static void *coalesce(void *bp)
     /* 헤더 먼저 바꿔야 size 만큼 이동돼서 성립 */
     else if (prev_alloc && !next_alloc)
     {
-        take_off_from_freelist(NEXT_BLKP(bp));
-
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        remove_list(NEXT_BLKP(bp));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
-
-        insert_in_first_place(bp);
+        insert_list(bp);
     }
     /* Case 3 앞이 free 블록 뒤는 할당 블록 */
     else if (!prev_alloc && next_alloc)
     {
-        take_off_from_freelist(PREV_BLKP(bp));
-
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        insert_in_first_place(PREV_BLKP(bp));
+        remove_list(PREV_BLKP(bp));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);    
+        bp = PREV_BLKP(bp);
+        insert_list(bp);
     }
     /* Case 4 */
     else
     {
-        take_off_from_freelist(PREV_BLKP(bp));
-        take_off_from_freelist(NEXT_BLKP(bp));
-
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
                 GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        insert_in_first_place(PREV_BLKP(bp));
+        remove_list(PREV_BLKP(bp));
+        remove_list(NEXT_BLKP(bp));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
+        insert_list(bp);
     }
     // printf("c3?\n\n");
     return bp;
@@ -221,14 +240,28 @@ static void *extend_heap(size_t words)
     return coalesce(bp);
 }
 
+static int get_list_num(size_t size) {
+    int list_num = 0;
+    size_t list_size = 32; // starting size of first list
+    while (list_num < NLISTS && size > list_size) {
+        list_num++;
+        list_size *= 2; // double the size for each list
+    }
+    return list_num;
+}
+
 static void *find_fit(size_t asize)
 {
     /* First-fit search */
     void *bp;
-    for (bp = ROOT; bp != mem_heap_lo(); bp = NEXT_FREE(bp))
+    int list_num = get_list_num(asize);
+    for (int i = list_num; i < NLISTS; i++)
     {
-        if (GET_SIZE(HDRP(bp)) >= asize) {
-            return bp;
+        for (bp = seg_list[i]; bp != mem_heap_lo(); bp = NEXT_FREE(bp))
+        {
+            if (GET_SIZE(HDRP(bp)) >= asize) {
+                return bp;
+            }
         }
     }
     return NULL; /* No fit */
@@ -239,20 +272,19 @@ static void *find_fit(size_t asize)
 static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
+    remove_list(bp);
 
     if ((csize - asize) >= (2 * DSIZE)) /* 쪼개졌을 때 */
     {
-        take_off_from_freelist(bp);
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
 
         PUT(HDRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
-        insert_in_first_place(NEXT_BLKP(bp));
+        insert_list(NEXT_BLKP(bp));
     }
     else /* 쪼개지지 않았을 때 */
     {
-        take_off_from_freelist(bp);
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
