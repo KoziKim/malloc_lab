@@ -90,14 +90,10 @@ team_t team = {
 
 #define NLISTS 16
 
-#define SIZE_CLASS_INDEX(size) ((size <= 32) ? 0 : (size <= 64) ? 1 : \
-                                (size <= 128) ? 2 : (size <= 256) ? 3 : \
-                                (size <= 512) ? 4 : (size <= 1024) ? 5 : \
-                                (size <= 2048) ? 6 : (size <= 4096) ? 7 : \
-                                (size <= 8192) ? 8 : (size <= 16384) ? 9 : \
-                                (size <= 32768) ? 10 : (size <= 65536) ? 11 : \
-                                (size <= 131072) ? 12 : (size <= 262144) ? 13 : \
-                                (size <= 524288) ? 14 : (size <= 1048576) ? 15 : NLISTS-1)
+#define SIZE_CLASS_INDEX(size) ((size <= 32) ? 0 : (size <= 64) ? 1 : (size <= 128) ? 2 : (size <= 256) ? 3 : \
+                                (size <= 512) ? 4 : (size <= 1024) ? 5 : (size <= 2048) ? 6 : (size <= 4096) ? 7 : \
+                                (size <= 8192) ? 8 : (size <= 16384) ? 9 : (size <= 32768) ? 10 : (size <= 65536) ? 11 : \
+                                (size <= 131072) ? 12 : (size <= 262144) ? 13 : (size <= 524288) ? 14 : (size <= 1048576) ? 15 : NLISTS - 1)
 
 void *heap_listp;
 void *seg_list[NLISTS];
@@ -240,21 +236,12 @@ static void *extend_heap(size_t words)
     return coalesce(bp);
 }
 
-static int get_list_num(size_t size) {
-    int list_num = 0;
-    size_t list_size = 32; // starting size of first list
-    while (list_num < NLISTS && size > list_size) {
-        list_num++;
-        list_size *= 2; // double the size for each list
-    }
-    return list_num;
-}
-
 static void *find_fit(size_t asize)
 {
     /* First-fit search */
     void *bp;
-    int list_num = get_list_num(asize);
+    int list_num = SIZE_CLASS_INDEX(asize);
+
     for (int i = list_num; i < NLISTS; i++)
     {
         for (bp = seg_list[i]; bp != mem_heap_lo(); bp = NEXT_FREE(bp))
