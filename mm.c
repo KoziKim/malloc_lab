@@ -88,12 +88,12 @@ team_t team = {
 #define NEXT_FREE(bp) (*(unsigned int *)(bp))          /* 다음 프리 블록의 주소 */
 #define PREV_FREE(bp) (*(unsigned int *)(bp + WSIZE))  /* 이전 프리 블록의 주소 */
 
-#define NLISTS 16
+#define NLISTS 17
 
-#define SIZE_CLASS_INDEX(size) ((size <= 32) ? 0 : (size <= 64) ? 1 : (size <= 128) ? 2 : (size <= 256) ? 3 : \
-                                (size <= 512) ? 4 : (size <= 1024) ? 5 : (size <= 2048) ? 6 : (size <= 4096) ? 7 : \
-                                (size <= 8192) ? 8 : (size <= 16384) ? 9 : (size <= 32768) ? 10 : (size <= 65536) ? 11 : \
-                                (size <= 131072) ? 12 : (size <= 262144) ? 13 : (size <= 524288) ? 14 : (size <= 1048576) ? 15 : NLISTS - 1)
+#define SIZE_CLASS_INDEX(size) ((size <= 16) ? 0 : (size <= 32) ? 1 : (size <= 64) ? 2 : (size <= 128) ? 3 : \
+                                (size <= 256) ? 4 : (size <= 512) ? 5 : (size <= 1024) ? 6 : (size <= 2048) ? 7: \
+                                (size <= 4096) ? 8 : (size <= 8192) ? 9 : (size <= 16384) ? 10 : (size <= 32768) ? 11 : (size <= 65536) ? 12 : \
+                                (size <= 131072) ? 13 : (size <= 262144) ? 14 : (size <= 524288) ? 15 : (size <= 1048576) ? 16 : NLISTS - 1)
 
 void *heap_listp;
 void *seg_list[NLISTS];
@@ -167,56 +167,48 @@ void    insert_list(void *bp)
 
 static void *coalesce(void *bp)
 {
-    // printf("c1?\n\n");
-    // printf("프롤로그 헤더에 적힌 사이즈: %u\n\n", GET((char *)mem_heap_lo() + 4));
-    // printf("프롤로그 풋터에 적힌 사이즈: %u\n\n", GET((char *)mem_heap_lo() + 8));
-    // printf("bp의 주소: %u--- mem_heap_lo의 주소: %u\n\n", bp, mem_heap_lo());
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    // printf("여기?\n\n");
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    // printf("여기2?\n\n");
     size_t size = GET_SIZE(HDRP(bp));
-    /* Case 1 전 후 둘 다 할당됐다면 */
-    // printf("c2?\n\n");
-    if (prev_alloc && next_alloc)
+
+    unsigned int tmp;
+    unsigned int base;
+    base = mem_heap_lo() + 12;
+    while (1)
     {
-        insert_list(bp);
-        return bp;
+        tmp = (unsigned int)bp - base;
+        if ((tmp & size) == 0) { // 내가 왼쪽일 때,
+            if (GET_ALLOC(bp+size) == 0 && GET_SIZE(bp+size) == size) { // 오른쪽 버디 할당 x, 합침
+                remove_list(bp + size);
+                // size *= 2;
+                PUT(HDRP(bp), PACK(2*size, 0));
+                PUT(FTRP(bp+size), PACK(2*size, 0));
+                insert_list(bp);
+                size *= 2;
+                // printf("왼쪽일 때 합치고 나서 size: %d\n\n", size);
+            }
+            else{
+                insert_list(bp);
+                // printf("왼쪽일 때 break 직전 size: %d\n\n", size);
+                break;
+            }
+        }
+        else {  // 내가 오른쪽일 때,
+            if (GET_ALLOC(bp-size) == 0 && GET_SIZE(bp-size) == size) { // 왼쪽 버디 할당 x, 합침
+                remove_list(bp - size);
+                PUT(HDRP(bp-size), PACK(2*size, 0));
+                PUT(FTRP(bp), PACK(2*size, 0));
+                insert_list(bp-size);
+                bp = bp - size;
+                size *= 2;
+                // printf("오른쪽일 때 합치고 나서 size: %d\n\n", size);
+            }
+            // 합칠 수 없을 때
+            else{
+                insert_list(bp);
+                // printf("오른쪽일 때 break 직전 size: %d\n\n", size);
+                break;
+            }
+        }
     }
-    /* Case 2 이전꺼 막힘, 다음께 free 블록 */
-    /* 사이 값은 trash 값 되기 때문에 굳이 안건드림 */
-    /* 헤더 먼저 바꿔야 size 만큼 이동돼서 성립 */
-    else if (prev_alloc && !next_alloc)
-    {
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        remove_list(NEXT_BLKP(bp));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size, 0));
-        insert_list(bp);
-    }
-    /* Case 3 앞이 free 블록 뒤는 할당 블록 */
-    else if (!prev_alloc && next_alloc)
-    {
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        remove_list(PREV_BLKP(bp));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-        insert_list(bp);
-    }
-    /* Case 4 */
-    else
-    {
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
-                GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        remove_list(PREV_BLKP(bp));
-        remove_list(NEXT_BLKP(bp));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-        insert_list(bp);
-    }
-    // printf("c3?\n\n");
     return bp;
 }
 
@@ -224,6 +216,7 @@ static void *extend_heap(size_t words)
 {
     char *bp;
     size_t size;
+
     /* Allocate an even number of words to maintain alignment */
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
     if ((long)(bp = mem_sbrk(size)) == -1)
@@ -260,21 +253,24 @@ static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
     remove_list(bp);
-
-    if ((csize - asize) >= (2 * DSIZE)) /* 쪼개졌을 때 */
+    // printf("csize: %d\n", csize);
+    // printf("asize: %d\n", asize);
+    while (csize != asize) /* csize asize 같아질 때 까지 */
     {
-        PUT(HDRP(bp), PACK(asize, 1));
-        PUT(FTRP(bp), PACK(asize, 1));
+        csize /= 2;
 
-        PUT(HDRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
-        insert_list(NEXT_BLKP(bp));
+        PUT(HDRP(bp+csize), PACK(csize, 0));
+        PUT(FTRP(bp+csize), PACK(csize, 0));
+        insert_list(bp + csize);
     }
-    else /* 쪼개지지 않았을 때 */
-    {
-        PUT(HDRP(bp), PACK(csize, 1));
-        PUT(FTRP(bp), PACK(csize, 1));
-    }
+    PUT(HDRP(bp), PACK(asize, 1));
+    PUT(FTRP(bp), PACK(asize, 1));
+
+    // PUT(HDRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
+    // PUT(FTRP(NEXT_BLKP(bp)), PACK(csize - asize, 0));
+    // insert_list(NEXT_BLKP(bp));
+    // PUT(HDRP(bp), PACK(csize, 1));
+    // PUT(FTRP(bp), PACK(csize, 1));
 }
 
 /*
@@ -286,26 +282,30 @@ void *mm_malloc(size_t size)
 {
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
+    size_t new;
+    new = 2*DSIZE;
     char *bp;
     /* Ignore spurious requests */
     if (size == 0)
         return NULL;
     /* Adjust block size to include overhead and alignment reqs. */
     if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE); /* (DSIZE - 1)은 올림 위함. size + DSIZE가 헤더 풋터 포함한 진짜 필요한 사이즈. */
+        new = 2 * DSIZE;
+    else {
+        while (new < size + DSIZE)
+            new <<= 1;
+    }
     /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL)
+    if ((bp = find_fit(new)) != NULL)
     {
-        place(bp, asize);
+        place(bp, new);
         return bp;
     }
     /* No fit found. Get more memory and place the block */
-    extendsize = MAX(asize, CHUNKSIZE);
+    extendsize = MAX(new, CHUNKSIZE);
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
-    place(bp, asize);
+    place(bp, new);
     return bp;
 }
 
