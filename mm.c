@@ -258,7 +258,7 @@ static void place(void *bp, size_t asize)
     while (csize != asize) /* csize asize 같아질 때 까지 */
     {
         csize /= 2;
-
+ 
         PUT(HDRP(bp+csize), PACK(csize, 0));
         PUT(FTRP(bp+csize), PACK(csize, 0));
         insert_list(bp + csize);
