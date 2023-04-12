@@ -176,12 +176,11 @@ static void *coalesce(void *bp)
     {
         tmp = (unsigned int)bp - base;
         if ((tmp & size) == 0) { // 내가 왼쪽일 때,
-            if (GET_ALLOC(bp+size) == 0 && GET_SIZE(bp+size) == size) { // 오른쪽 버디 할당 x, 합침
+            if (GET_ALLOC(HDRP(bp+size)) == 0 && GET_SIZE(HDRP(bp+size)) == size) { // 오른쪽 버디 할당 x, 합침
                 remove_list(bp + size);
                 // size *= 2;
                 PUT(HDRP(bp), PACK(2*size, 0));
                 PUT(FTRP(bp+size), PACK(2*size, 0));
-                insert_list(bp);
                 size *= 2;
                 // printf("왼쪽일 때 합치고 나서 size: %d\n\n", size);
             }
@@ -192,11 +191,10 @@ static void *coalesce(void *bp)
             }
         }
         else {  // 내가 오른쪽일 때,
-            if (GET_ALLOC(bp-size) == 0 && GET_SIZE(bp-size) == size) { // 왼쪽 버디 할당 x, 합침
+            if (GET_ALLOC(HDRP(bp-size)) == 0 && GET_SIZE(HDRP(bp-size)) == size) { // 왼쪽 버디 할당 x, 합침
                 remove_list(bp - size);
                 PUT(HDRP(bp-size), PACK(2*size, 0));
                 PUT(FTRP(bp), PACK(2*size, 0));
-                insert_list(bp-size);
                 bp = bp - size;
                 size *= 2;
                 // printf("오른쪽일 때 합치고 나서 size: %d\n\n", size);
